@@ -47,7 +47,7 @@ use exploit/unix/ftp/proftpd_modcopy_exec
 set RHOSTS 10.0.2.15
 ```
 
-The selected module weaponizes **CVE-2015-3306**, a critical vulnerability residing in ProFTPD's `mod_copy` component. This flaw stems from an insecure default configuration where the `SITE NEW` and `SITE CPTO` commands are exposed to unauthenticated remote clients. This design failure allows an adversary to execute arbitrary file copy commands across the target's underlying file system without providing valid system credentials, violating the fundamental principle of **Complete Mediation** (Saltzer and Schroeder).
+The selected module weaponizes **CVE-2015-3306**, a critical vulnerability residing in ProFTPD's `mod_copy` component. This flaw stems from an insecure default configuration where the `SITE CPFR` and `SITE CPTO` commands are exposed to unauthenticated remote clients. This design failure allows an adversary to execute arbitrary file copy commands across the target's underlying file system without providing valid system credentials, violating the fundamental principle of **Complete Mediation** (Saltzer and Schroeder).
 
 To establish an interactive control channel, a Python-based reverse shell payload is configured:
 
